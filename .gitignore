@@ -1,0 +1,3 @@
+data/Imagenet32_train/*
+data/cifar-100-python.tar.gz
+data/cifar-100-python/train

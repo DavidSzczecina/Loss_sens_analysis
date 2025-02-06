@@ -14,7 +14,7 @@ from utils import disable_print, enable_print
 def plot_pred_probability_distribution(epoch, fold, epoch_pred_probs, corruption_tracker, save_folder):
     corrupted_probs = [prob for prob, corrupted in zip(epoch_pred_probs, corruption_tracker) if corrupted]
     uncorrupted_probs = [prob for prob, corrupted in zip(epoch_pred_probs, corruption_tracker) if not corrupted]
-    bins = np.linspace(0.98, 1, 51)
+    bins = np.linspace(0, 1, 51)
     uncorrupted_hist, _ = np.histogram(uncorrupted_probs, bins=bins)
     corrupted_hist, _ = np.histogram(corrupted_probs, bins=bins)
     bin_centers = 0.5 * (bins[:-1] + bins[1:])
@@ -39,9 +39,9 @@ def train_and_predict(dataset_data, dataset_labels, args, loss_function, corrupt
     total_y_pred = []
 
     print(f"corruption rate: {args.corruption_rate}, delay: {args.delay}, gamma: {args.blurry_loss_gamma}, cutoff_pt: {args.cutoff_pt}")
-    if args.focalLoss:
+    if args.focal_loss:
         print("Focal Loss Test")
-    if args.GCELoss:
+    if args.GCE_loss:
         print("Generalized CE Loss Test")
         print(f"GCE Q = {args.GCE_q}")
     elif (args.blurry_loss_gamma == 0.0) and (args.cutoff_pt == 0.0):
@@ -63,7 +63,7 @@ def train_and_predict(dataset_data, dataset_labels, args, loss_function, corrupt
             scheduler = StepLR(optimizer, step_size=5, gamma=0.1 if args.dataset == 'CIFAR10' else 0.2)
         scaler = GradScaler()
         for epoch in range(num_epochs):
-            if (not args.focalLoss) and (not args.GCELoss):
+            if (not args.focal_loss) and (not args.GCE_loss):
                 if epoch >= args.delay:
                     loss_function.gamma = float(args.blurry_loss_gamma)
                     loss_function.cutoff_pt = args.cutoff_pt

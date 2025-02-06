@@ -19,7 +19,7 @@ module load python
 cd ~/projects/def-pfieguth/dszczeci/Loss_sens_analysis/python_files
 
 # Define a base command with parameters that remain constant
-BASE_CMD="python3 loss_sens_analysis.py --basicModel --supress_print --epochs 10 --num_folds 5 --corruption_rate 0.2 --blurry_loss_gamma 0.0"
+BASE_CMD="python3 loss_sens_analysis.py --basic_model --supress_print --epochs 10 --num_folds 5 --corruption_rate 0.2 --blurry_loss_gamma 0.0"
 
 echo "Running base experiments:"
 

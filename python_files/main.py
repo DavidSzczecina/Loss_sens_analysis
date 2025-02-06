@@ -6,8 +6,9 @@ import os
 import torch
 import numpy as np
 from torchvision import datasets, transforms
+from datetime import datetime
 
-from losses import BlurryLoss, FocalLoss, GCELoss
+from losses import BlurryLoss, FocalLoss, GCELoss, NormalizedCrossEntropy
 from models import get_model
 from data import load_dataset, format_dataset
 from trainer import train_and_predict
@@ -18,27 +19,32 @@ from functions import DatasetCorrupterDetect as corrupter
 from enums.datasetEnum import DatasetType
 from cleanlab.filter import find_label_issues
 
-SAVE_FOLDER = "plots"
+current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+SAVE_FOLDER = os.path.join("plots", current_datetime)
+
 if not os.path.exists(SAVE_FOLDER):
     os.makedirs(SAVE_FOLDER)
 
 def main():
     parser = argparse.ArgumentParser(description="Modularized Training Script")
     parser.add_argument("--seed", default=123, type=int)
+    parser.add_argument("--supress_print", action="store_true", default=False, help="Suppress training prints")
+    
     parser.add_argument("--dataset", default="MNIST", help="Dataset to use")
-    parser.add_argument("--model_architecture", default="MLP", help="Model to use")
     parser.add_argument("--num_classes", default=10, type=int, help="Number of output classes")
     parser.add_argument("--corruption_rate", default=0.0, type=float, help="Corruption rate")
-    parser.add_argument("--blurry_loss_gamma", default=0.0, type=float, help="blurry loss gamma parameter, 0 == crossEntropy")
-    parser.add_argument("--delay", type=int, default=0, help="Delay parameter for loss switching")
     parser.add_argument("--num_folds", type=int, default=5, help="Number of k folds")
-    parser.add_argument("--cutoff_pt", type=float, default=0.0, help="pt below which loss == 0")
-    parser.add_argument("--focalLoss", action="store_true", default=False, help="Use focal loss")
-    parser.add_argument("--GCELoss", action="store_true", default=False, help="Use Generalized Cross Entropy loss")
-    parser.add_argument("--GCE_q", type=float, default=0.7, help="q value for GCE Loss function")
-    parser.add_argument("--basicModel", action="store_true", default=False, help="Use basic model")
-    parser.add_argument("--supress_print", action="store_true", default=False, help="Suppress training prints")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to run for")
+    parser.add_argument("--basic_model", action="store_true", default=False, help="Use basic model")
+    parser.add_argument("--delay", type=int, default=0, help="Delay parameter for loss switching")
+    
+    parser.add_argument("--blurry_loss_gamma", default=0.0, type=float, help="blurry loss gamma parameter, 0 == crossEntropy")
+    parser.add_argument("--cutoff_pt", type=float, default=0.0, help="pt below which loss == 0")
+    parser.add_argument("--focal_loss", action="store_true", default=False, help="Use focal loss")
+    parser.add_argument("--GCE_loss", action="store_true", default=False, help="Use Generalized Cross Entropy loss")
+    parser.add_argument("--GCE_q", type=float, default=0.7, help="q value for GCE Loss function")
+    parser.add_argument("--NormalizedCE", action="store_true", default=False, help="Use Normalized Cross Entropy loss")
+
     args = parser.parse_args()
 
     # Set the seed for reproducibility
@@ -53,10 +59,12 @@ def main():
     dataset_data, dataset_labels = format_dataset(dataset_train.data, new_labels)
 
     # Select loss function based on arguments
-    if args.focalLoss:
+    if args.focal_loss:
         loss_function = FocalLoss(gamma=2)
-    elif args.GCELoss:
+    elif args.GCE_loss:
         loss_function = GCELoss(q=args.GCE_q)
+    elif args.NormalizedCE:
+        loss_function = NormalizedCrossEntropy(args.num_classes)
     else:
         loss_function = BlurryLoss(gamma=args.blurry_loss_gamma)
 

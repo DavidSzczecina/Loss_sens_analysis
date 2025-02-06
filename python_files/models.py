@@ -56,7 +56,7 @@ def get_resnet_model(dataset: str, num_channels: int, num_classes: int) -> nn.Mo
     return model
 
 def get_model(args, num_channels: int, img_size: int, num_classes: int) -> nn.Module:
-    if args.basicModel:
+    if args.basic_model:
         return get_basic_model(num_channels, img_size, num_classes)
     else:
         return get_resnet_model(args.dataset, num_channels, num_classes)

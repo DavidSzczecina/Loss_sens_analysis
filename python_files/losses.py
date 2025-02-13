@@ -5,18 +5,12 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
+
 class BlurryLoss(nn.Module):
-    def __init__(self, gamma: float = 0.0, cutoff_pt: float = 0.0, alpha=None, size_average: bool = True):
-        super(BlurryLoss, self).__init__()
+    def __init__(self, gamma: float = 0.0, reduction: str = "mean"):
+        super().__init__()
         self.gamma = float(gamma)
-        self.cutoff_pt = cutoff_pt
-        self.alpha = None
-        if alpha is not None:
-            if isinstance(alpha, (float, int)):
-                self.alpha = torch.Tensor([alpha, 1 - alpha])
-            elif isinstance(alpha, list):
-                self.alpha = torch.Tensor(alpha)
-        self.size_average = size_average
+        self.reduction = reduction
 
     def forward(self, input, target):
         if input.dim() > 2:
@@ -24,18 +18,50 @@ class BlurryLoss(nn.Module):
             input = input.transpose(1, 2)
             input = input.contiguous().view(-1, input.size(2))
         target = target.view(-1, 1)
-        logpt = F.log_softmax(input, dim=1)
-        logpt = logpt.gather(1, target).view(-1)
-        pt = Variable(logpt.data.exp())
-        if self.alpha is not None:
-            if self.alpha.type() != input.data.type():
-                self.alpha = self.alpha.type_as(input.data)
-            at = self.alpha.gather(0, target.data.view(-1))
-            logpt = logpt * Variable(at)
-        mask = pt >= self.cutoff_pt
-        loss = - (pt ** self.gamma) * logpt
-        loss = loss * mask.float()
-        return loss.mean() if self.size_average else loss.sum()
+        logpt = F.log_softmax(input, dim=1).gather(1, target).squeeze(1)  # Get log-prob of true class
+        pt = logpt.exp().clamp(min=1e-8)  # Convert to probability, avoid log(0)
+
+        loss = - (pt ** self.gamma) * logpt  # Apply Blurry loss weighting
+
+        # Apply reduction
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss  # "none" returns element-wise loss
+
+class PiecewiseZeroLoss(nn.Module):
+    def __init__(self, cutoff_pt: float = 0.0, reduction: str = "mean"):
+        super().__init__()
+        self.cutoff_pt = cutoff_pt
+        self.reduction = reduction
+
+    def forward(self, input, target):
+        log_probs = F.log_softmax(input, dim=1)
+        logpt = log_probs.gather(1, target.unsqueeze(1)).squeeze(1)  # Select correct class log-prob
+        pt = logpt.exp().clamp(min=1e-8)  # Convert log-prob to probability
+
+        loss = -logpt * (pt >= self.cutoff_pt).float()  # Zero out loss if pt < cutoff_pt
+        # Apply reduction
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        return loss  # "none" returns element-wise loss
+
+
+
+class CrossEntropy(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ce = torch.nn.CrossEntropyLoss()
+    
+    def forward(self, pred, labels):
+        ce = self.ce(pred, labels)
+        return ce
+
+
+
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0, cutoff_pt: float = 0.0, alpha=None, size_average: bool = True):
@@ -66,6 +92,7 @@ class FocalLoss(nn.Module):
             logpt = logpt * Variable(at)
         loss = - ((1 - pt) ** self.gamma) * logpt
         return loss.mean() if self.size_average else loss.sum()
+
 
 class GCELoss(nn.Module):
     def __init__(self, q: float = 0.7, ignore_index: int = -100):
@@ -101,6 +128,26 @@ class GCELoss(nn.Module):
             loss = loss.mean()
         return loss
 
+
+
+
+class GeneralizedCrossEntropy(torch.nn.Module):
+    def __init__(self, num_classes, q=0.7):
+        super(GeneralizedCrossEntropy, self).__init__()
+        self.num_classes = num_classes
+        self.q = q
+
+    def forward(self, pred, labels):
+        pred = F.softmax(pred, dim=1)
+        pred = torch.clamp(pred, min=1e-7, max=1.0)
+        label_one_hot = F.one_hot(labels, self.num_classes).float().to(pred.device)
+        gce = (1. - torch.pow(torch.sum(label_one_hot * pred, dim=1), self.q)) / self.q
+        return gce.mean()
+
+
+
+
+
 class NormalizedNegativeCrossEntropy(nn.Module):
     def __init__(self, num_classes: int, min_prob: float):
         super().__init__()
@@ -114,8 +161,6 @@ class NormalizedNegativeCrossEntropy(nn.Module):
         label_one_hot = torch.nn.functional.one_hot(labels, self.num_classes).to(pred.device)
         nnce = 1 - (label_one_hot * pred).sum(dim=1) / pred.sum(dim=1)
         return nnce.mean()
-
-
 
 """
 https://github.com/Virusdoll/Active-Negative-Loss/blob/main/loss.py
@@ -144,15 +189,6 @@ class MeanSquareError(torch.nn.Module):
         mse = self.mse(pred, label_one_hot)
         return mse
 
-class CrossEntropy(torch.nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.ce = torch.nn.CrossEntropyLoss()
-    
-    def forward(self, pred, labels):
-        ce = self.ce(pred, labels)
-        return ce
-
 class RevserseCrossEntropy(torch.nn.Module):
     def __init__(self, num_classes) -> None:
         super().__init__()
@@ -165,19 +201,6 @@ class RevserseCrossEntropy(torch.nn.Module):
         label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
         rce = (-1 * torch.sum(pred * torch.log(label_one_hot), dim=1))
         return rce.mean()
-
-class GeneralizedCrossEntropy(torch.nn.Module):
-    def __init__(self, num_classes, q=0.7):
-        super(GeneralizedCrossEntropy, self).__init__()
-        self.num_classes = num_classes
-        self.q = q
-
-    def forward(self, pred, labels):
-        pred = F.softmax(pred, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-        label_one_hot = F.one_hot(labels, self.num_classes).float().to(pred.device)
-        gce = (1. - torch.pow(torch.sum(label_one_hot * pred, dim=1), self.q)) / self.q
-        return gce.mean()
 
 class SymmetricCrossEntropy(torch.nn.Module):
     def __init__(self, num_classes, alpha, beta):
@@ -448,13 +471,41 @@ def _anl(active_loss, negative_loss, config):
 
 
 
-# Loss
 
-def mae(num_classes):
-    return MeanAbsoluteError(num_classes)
+
+# Custom Loss Functions
+
+def bl(blurry_loss_gamma):
+    return BlurryLoss(gamma=blurry_loss_gamma)
+
+def pz(PZ_cutoff):
+    return PiecewiseZeroLoss()
+
+
+# Loss Functions
 
 def ce():
     return CrossEntropy()
+
+def fl(config):
+    return FocalLoss(gamma=2.0)
+
+def gce(num_classes, config):
+    #return GeneralizedCrossEntropy(num_classes, q=0.7)
+    return GCELoss(q=0.7)
+
+# Active Negative Loss
+def anl_ce(num_classes, config):
+    return _anl(nce(num_classes), nnce(num_classes, config), config)
+
+def anl_fl(num_classes, config):
+    return _anl(nfl(num_classes, config), nnfl(num_classes, config), config)
+
+
+
+
+def mae(num_classes):
+    return MeanAbsoluteError(num_classes)
 
 def rce(num_classes):
     return RevserseCrossEntropy(num_classes)
@@ -464,12 +515,6 @@ def nce(num_classes):
 
 def sce(num_classes, config):
     return SymmetricCrossEntropy(num_classes, config['alpha'], config['beta'])
-
-def gce(num_classes, config):
-    return GeneralizedCrossEntropy(num_classes, config['q'])
-
-def fl(config):
-    return FocalLoss(gamma=config['gamma'])
 
 def nfl(num_classes, config):
     return NormalizedFocalLoss(config['gamma'], num_classes)
@@ -514,13 +559,6 @@ def nce_aul(num_classes, config):
 def nce_ael(num_classes, config):
     return _apl(nce(num_classes), ael(num_classes, config), config)
 
-# Active Negative Loss
-
-def anl_ce(num_classes, config):
-    return _anl(nce(num_classes), nnce(num_classes, config), config)
-
-def anl_fl(num_classes, config):
-    return _anl(nfl(num_classes, config), nnfl(num_classes, config), config)
 
 # Active Negative Loss with Entropy Regularization
 def anl_ce_er(num_classes, config):

@@ -8,25 +8,27 @@ import numpy as np
 from torchvision import datasets, transforms
 from datetime import datetime
 
-from losses import BlurryLoss, FocalLoss, GCELoss, NormalizedCrossEntropy
+# Import loss functions 
+from losses import ce, fl, bl, pz, gce, anl_ce, anl_fl
+
 from models import get_model
 from data import load_dataset, format_dataset
 from trainer import train_and_predict
 from utils import set_seed
 
-# Assume your custom corruption module and dataset enum are available:
+# Custom corruption module and dataset enum:
 from functions import DatasetCorrupterDetect as corrupter
 from enums.datasetEnum import DatasetType
 from cleanlab.filter import find_label_issues
 
+# Create a timestamped folder for saving plots
 current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 SAVE_FOLDER = os.path.join("plots", current_datetime)
-
 if not os.path.exists(SAVE_FOLDER):
     os.makedirs(SAVE_FOLDER)
 
 def main():
-    parser = argparse.ArgumentParser(description="Modularized Training Script")
+    parser = argparse.ArgumentParser(description="Loss function Testing Script")
     parser.add_argument("--seed", default=123, type=int)
     parser.add_argument("--supress_print", action="store_true", default=False, help="Suppress training prints")
     
@@ -35,46 +37,62 @@ def main():
     parser.add_argument("--corruption_rate", default=0.0, type=float, help="Corruption rate")
     parser.add_argument("--num_folds", type=int, default=5, help="Number of k folds")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to run for")
-    parser.add_argument("--basic_model", action="store_true", default=False, help="Use basic model")
+    parser.add_argument("--SGD", action="store_true", default=False, help="Use SGD optimizer")
+
     parser.add_argument("--delay", type=int, default=0, help="Delay parameter for loss switching")
     
-    parser.add_argument("--blurry_loss_gamma", default=0.0, type=float, help="blurry loss gamma parameter, 0 == crossEntropy")
-    parser.add_argument("--cutoff_pt", type=float, default=0.0, help="pt below which loss == 0")
-    parser.add_argument("--focal_loss", action="store_true", default=False, help="Use focal loss")
-    parser.add_argument("--GCE_loss", action="store_true", default=False, help="Use Generalized Cross Entropy loss")
-    parser.add_argument("--GCE_q", type=float, default=0.7, help="q value for GCE Loss function")
-    parser.add_argument("--NormalizedCE", action="store_true", default=False, help="Use Normalized Cross Entropy loss")
-
+    # Use a single parameter for loss selection.
+    # Allowed choices: 'ce', 'focal', 'gce', 'anl_ce', 'anl_fl', 'blurry', 'pz'
+    parser.add_argument("--loss", type=str, default="ce",
+                        choices=["ce", "focal", "gce", "anl_ce", "anl_fl", "blurry", "pz"],
+                        help="Loss function to use: 'ce' (Cross Entropy), 'focal' (Focal Loss), 'gce' (Generalized CE), "
+                             "'anl_ce' (ANL Cross Entropy), 'anl_fl' (ANL Focal Loss), 'blurry' (Blurry Loss), 'pz' (Piecewise Zero Loss)")
+    # Parameters specific to some losses:
+    parser.add_argument("--bl_gamma", type=float, default=0.0,
+                        help="Blurry loss gamma parameter (only used if --loss blurry), 0 == cross entropy")
+    parser.add_argument("--pz_cutoff", type=float, default=0.0,
+                        help="Cutoff value for Piecewise Zero loss (only used if --loss pz)")
+    
     args = parser.parse_args()
-
-    # Set the seed for reproducibility
+    
+    # Set seed for reproducibility
     set_seed(args.seed)
-
+    
     # Load dataset and extract properties
     dataset_train, dataset_test, dataset_img_dim, num_channels = load_dataset(args)
     
     # Corrupt the training labels using your corrupter
-    new_labels, corruption_tracker = corrupter.corrupt_data(dataset_train, 1, float(args.corruption_rate), args.num_classes)
+    new_labels, corruption_tracker = corrupter.corrupt_data(
+        dataset_train, 1, float(args.corruption_rate), args.num_classes
+    )
     dataset_train.targets = new_labels
     dataset_data, dataset_labels = format_dataset(dataset_train.data, new_labels)
-
-    # Select loss function based on arguments
-    if args.focal_loss:
-        loss_function = FocalLoss(gamma=2)
-    elif args.GCE_loss:
-        loss_function = GCELoss(q=args.GCE_q)
-    elif args.NormalizedCE:
-        loss_function = NormalizedCrossEntropy(args.num_classes)
-    else:
-        loss_function = BlurryLoss(gamma=args.blurry_loss_gamma)
-
-    # Build the model and attach it to args (so the trainer can access it)
+    
+    # For CIFAR100, adjust the number of classes
+    if args.dataset == DatasetType.CIFAR100.value:
+        args.num_classes = 100
+    
+    # Use a dictionary to map loss names to their corresponding constructor.
+    loss_dict = {
+        "ce": lambda: ce(),
+        "focal": lambda: fl(),
+        "gce": lambda: gce(),
+        "anl_ce": lambda: anl_ce(args.num_classes),
+        "anl_fl": lambda: anl_fl(args.num_classes),
+        "blurry": lambda: bl(args.bl_gamma),
+        "pz": lambda: pz(args.pz_cutoff)
+    }
+    
+    loss_function = loss_dict[args.loss]()
+    
+    # Build the model and attach it to args so the trainer can access it
     model = get_model(args, num_channels, dataset_img_dim, args.num_classes)
     args.model = model
-
+    
     # Train and evaluate the model
     pred_probabilities, predicted_labels, avg_accuracy = train_and_predict(
-        dataset_data, dataset_labels, args, loss_function, corruption_tracker, SAVE_FOLDER, k_folds=args.num_folds, num_epochs=args.epochs
+        dataset_data, dataset_labels, args, loss_function, corruption_tracker, SAVE_FOLDER,
+        k_folds=args.num_folds, num_epochs=args.epochs
     )
     
     print("Total predicted probabilities:", len(pred_probabilities))

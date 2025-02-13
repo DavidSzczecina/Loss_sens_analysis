@@ -21,11 +21,13 @@ def load_dataset(args):
         dataset_test = datasets.MNIST(root="../data", download=True, train=False, transform=transform)
         dataset_img_dim = 28
         num_channels = 1
+        
     elif args.dataset == DatasetType.FASHIONMNIST.value:
         dataset_train = datasets.FashionMNIST(root="../data", download=True, train=True, transform=transform)
         dataset_test = datasets.FashionMNIST(root="../data", download=True, train=False, transform=transform)
         dataset_img_dim = 28
         num_channels = 1
+
     elif args.dataset == DatasetType.CIFAR10.value:
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -35,6 +37,7 @@ def load_dataset(args):
         dataset_test = datasets.CIFAR10(root="../data", train=False, transform=transform)
         dataset_img_dim = 32
         num_channels = 3
+
     elif args.dataset == DatasetType.CIFAR100.value:
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -46,6 +49,7 @@ def load_dataset(args):
         dataset_img_dim = 32
         num_channels = 3
         args.num_classes = 100
+
     return dataset_train, dataset_test, dataset_img_dim, num_channels
 
 def format_dataset(dataset_data, dataset_labels):
